@@ -1,0 +1,4 @@
+# for MIMO control panels (severl PIDs may match.
+# Therefore, we check VID only. Let the shell script and MIMO
+# updater to check the PID
+SUBSYSTEM=="usb", ENV{ID_VENDOR_ID}=="17e9", RUN+="/sbin/minijail0 -u displaylink -g displaylink -c 4096 /usr/sbin/mimo-updater"
