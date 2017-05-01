@@ -46,6 +46,10 @@ struct default_delete<FILE> {
 
 namespace {
 
+// Mode config
+const int kNrParamPollMode = 1;
+const int kNrParamUpdateMode = 2;
+
 // device control commands and addresses
 const int kDlAddr = 0xa2;
 const int kSizeOfRebootPayload = 4;
@@ -116,6 +120,11 @@ enum StatusCode {
   E_FAILED_TO_OPEN_FW_FILE,
   E_FAILED_TO_READ_FW_FILE,
   E_INVALID_FW_FILE_SIZE
+};
+
+enum OperationMode {
+  E_POLL_VERSION_MODE,
+  E_FW_UPDATE_MODE
 };
 
 TestPointLocation test_point_position = E_TP_INVALID;
@@ -519,7 +528,11 @@ static StatusCode UpdateFw(
 }
 
 static void Usage() {
-  std::cout << "[Usage] mimo_fw_updater [fw binary file]" << std::endl;
+  std::cout << "[Usage]" << std::endl;
+  std::cout << "  mimo_fw_updater [fw binary file]: update the firmware";
+  std::cout << std::endl;
+  std::cout << "  mimo_fw_updater: to poll the version information";
+  std::cout << std::endl;
 }
 
 static StatusCode ReadFwVersionFromFwFileName(
@@ -573,7 +586,9 @@ static StatusCode CheckFwFileValidityAndGetVersion(
   return E_OK;
 }
 
-static StatusCode FwUpdateMain(const std::string& file_name) {
+static StatusCode FwUpdateMainOrPollVersion(
+    const std::string& file_name,
+    const OperationMode operation_mode) {
   libusb_device **devs;
   libusb_context *ctx;
   libusb_device_descriptor device_descriptor;
@@ -581,10 +596,12 @@ static StatusCode FwUpdateMain(const std::string& file_name) {
   uint8_t version[kFwVersionLenByte];
 
   // check the validity of the FW file name
-  status = CheckFwFileValidityAndGetVersion(file_name, version);
+  if (operation_mode == E_FW_UPDATE_MODE) {
+    status = CheckFwFileValidityAndGetVersion(file_name, version);
 
-  if (status)
-    return status;
+    if (status)
+      return status;
+  }
 
   // Step 1. init USB lib
   if (LibUsbHelper(libusb_init(&ctx)))
@@ -624,20 +641,52 @@ static StatusCode FwUpdateMain(const std::string& file_name) {
       if (LibUsbHelper(libusb_open(current_device, &device_handle)))
         return E_FAILED_USB_OPERATIONS;
 
-      StatusCode status = UpdateFw(
-          current_device,
-          device_handle,
-          &device_descriptor,
-          prog_if,
-          file_name,
-          version);
+      switch (operation_mode) {
+        case E_POLL_VERSION_MODE: {
+          uint8_t fw_version[kFwVersionLenByte];
+          status = ReadDeviceFwVersion(
+              current_device,
+              device_handle,
+              prog_if,
+              fw_version);
 
-      if (status) {
-        std::cerr << "[Fatal] Failed to update firmware: " << status;
-        std::cerr << ", device: " << i << std::endl;
+          if (status == E_OK) {
+            PrintFwVersion(fw_version);
+          } else {
+            std::cerr << "[Fatal] Failed to poll firmware: " << status;
+            std::cerr << ", device: " << i << std::endl;
+          }
+          break;
+        }
+        case E_FW_UPDATE_MODE: {
+          StatusCode status;
+          status = UpdateFw(
+              current_device,
+              device_handle,
+              &device_descriptor,
+              prog_if,
+              file_name,
+              version);
+
+          if (status != E_OK) {
+            std::cerr << "[Fatal] Failed to update firmware: " << status;
+            std::cerr << ", device: " << i << std::endl;
+          }
+
+          // The reason that it is rebooted even if the update fails is that
+          // the device will be in the recovery mode after reboot. the device
+          // to let the device go into the recovery mode.
+          // If it's in the recovery mode, the system will have a chance to
+          // redo it again to fix the problem.
+          RebootMimo(device_handle);
+          break;
+        }
+        default: {
+          std::cerr << "[Fatal] Unknown operation mode(";
+          std::cerr << operation_mode << ")" << std::endl;
+          break;
+        }
       }
-
-      RebootMimo(device_handle);
 
       LibUsbHelper(libusb_release_interface(device_handle, prog_if));
       LibUsbHelper(libusb_attach_kernel_driver(device_handle, prog_if));
@@ -653,20 +702,27 @@ static StatusCode FwUpdateMain(const std::string& file_name) {
 }  // namespace
 
 int main(int argc, char **argv) {
+  OperationMode operation_mode;
+  std::string fw_file_name;
+
   // check the input
-  if (argc != 2) {
+  if (argc == kNrParamPollMode) {
+    std::cout << "Querying device firmware version info:" << std::endl;
+    operation_mode = E_POLL_VERSION_MODE;
+  } else if (argc == kNrParamUpdateMode) {
+    operation_mode = E_FW_UPDATE_MODE;
+    fw_file_name = argv[1];
+  } else {
     Usage();
     return E_FAILED_INCORRECT_PARAM_LIST;
   }
 
-  // check the status of the firmware
-  std::string fw_file_name(argv[1]);
   StatusCode status;
 
   // executing the update procedure
-  status = FwUpdateMain(fw_file_name);
+  status = FwUpdateMainOrPollVersion(fw_file_name, operation_mode);
 
-  if (status) {
+  if (status != E_OK) {
     std::cerr << "[Fatal] Failed to update firmware: ";
     std::cerr << status << std::endl;
     return status;
