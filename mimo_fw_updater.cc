@@ -108,6 +108,7 @@ enum TestPointLocation {
 
 enum StatusCode {
   E_OK = 0,
+  E_OK_NO_UPDATE,
   E_FAILED_USB_OPERATIONS,
   E_INVALID_FW_FILE_NAME,
   E_FAILED_FW_FILE_NOT_ACCESSIBLE,
@@ -507,7 +508,7 @@ static StatusCode UpdateFw(
 
   // the version is the same, no need to update
   if (CompareVersionNumber(version, curr_version))
-    return E_OK;
+    return E_OK_NO_UPDATE;
 
   // Step 1. reset the version number in firmware
   status = WriteFwVersion(dev, device_handle, prog_if, kFwInvalidVersion);
@@ -668,7 +669,7 @@ static StatusCode FwUpdateMainOrPollVersion(
               file_name,
               version);
 
-          if (status != E_OK) {
+          if (status != E_OK && status != E_OK_NO_UPDATE) {
             std::cerr << "[Fatal] Failed to update firmware: " << status;
             std::cerr << ", device: " << i << std::endl;
           }
@@ -678,7 +679,9 @@ static StatusCode FwUpdateMainOrPollVersion(
           // to let the device go into the recovery mode.
           // If it's in the recovery mode, the system will have a chance to
           // redo it again to fix the problem.
-          RebootMimo(device_handle);
+          if (status != E_OK_NO_UPDATE)
+            RebootMimo(device_handle);
+
           break;
         }
         default: {
