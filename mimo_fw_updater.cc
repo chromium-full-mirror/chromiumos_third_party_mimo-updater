@@ -3,7 +3,6 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 //
-#include <usb.h>
 #include <libusb-1.0/libusb.h>
 #include <sys/types.h>
 #include <sys/stat.h>
