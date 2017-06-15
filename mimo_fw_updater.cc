@@ -8,6 +8,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <base/logging.h>
+#include <brillo/syslog_logging.h>
+
 #include <memory>
 #include <cstring>
 #include <iostream>
@@ -169,15 +172,38 @@ static bool CompareVersionNumber(const uint8_t* v1, const uint8_t* v2) {
 //    expected_ret: what we're expecting, generally 0
 // Return
 //    StatusCode.
-static StatusCode LibUsbHelper(
+static StatusCode LibUsbHelperError(
     const int usb_ret_code,
     const int expected_ret = 0) {
   if (usb_ret_code == expected_ret)
     return E_OK;
 
-  std::cerr << "[Fatal] Usb error: ";
-  std::cerr << libusb_error_name(usb_ret_code);
-  std::cerr << "(" << usb_ret_code << "," << expected_ret << ")" << std::endl;
+  LOG(ERROR)
+      << "Usb error: "
+      << libusb_error_name(usb_ret_code)
+      << "(" << usb_ret_code << "," << expected_ret << ")";
+
+  return E_FAILED_USB_OPERATIONS;
+}
+
+// Description
+//    The function check the return code of the libusb func.
+//    if it's not a good expected value, log the warning.
+// Param
+//    usb_ret_code: actual return code
+//    expected_ret: what we're expecting, generally 0
+// Return
+//    StatusCode.
+static StatusCode LibUsbHelperWarning(
+    const int usb_ret_code,
+    const int expected_ret = 0) {
+  if (usb_ret_code == expected_ret)
+    return E_OK;
+
+  LOG(WARNING)
+      << "Possible usb error: "
+      << libusb_error_name(usb_ret_code)
+      << "(" << usb_ret_code << "," << expected_ret << ")";
 
   return E_FAILED_USB_OPERATIONS;
 }
@@ -210,7 +236,7 @@ static StatusCode Poke(
       data_len,
       kUsbTimeOutMs);
 
-  if (LibUsbHelper(written_length, data_len))
+  if (LibUsbHelperError(written_length, data_len))
     return E_FAILED_TO_SEND_USB_CONTROL;
 
   return E_OK;
@@ -236,7 +262,7 @@ static StatusCode I2cRead(
       data_len,
       kUsbTimeOutMs);
 
-  if (LibUsbHelper(written_len, data_len))
+  if (LibUsbHelperError(written_len, data_len))
     return E_FAILED_TO_SEND_USB_CONTROL;
 
   return E_OK;
@@ -262,7 +288,7 @@ static StatusCode I2cWrite(
       data_len,
       kUsbTimeOutMs);
 
-  if (LibUsbHelper(written_len, data_len))
+  if (LibUsbHelperError(written_len, data_len))
     return E_FAILED_TO_SEND_USB_CONTROL;
 
   return E_OK;
@@ -285,7 +311,7 @@ static StatusCode RebootMimo(libusb_device_handle *dev_handle) {
       payload,
       kSizeOfRebootPayload,
       kNrUsbReqTimeoutSec);
-  LibUsbHelper(ret, 4);
+  LibUsbHelperWarning(ret, 4);
 
   ret = libusb_control_transfer(
       dev_handle,
@@ -297,7 +323,7 @@ static StatusCode RebootMimo(libusb_device_handle *dev_handle) {
       sizeof(len),
       kUsbTimeOutMs);
 
-  LibUsbHelper(ret, sizeof(len));
+  LibUsbHelperWarning(ret, sizeof(len));
   return E_OK;
 }
 
@@ -443,16 +469,16 @@ static StatusCode ReadDeviceFwVersion(
   // Step 2. check if the USB kernel driver is active.
   // if active, we need to detach the driver first
   if (libusb_kernel_driver_active(dev_handle, prog_if) == 1) {
-    if (LibUsbHelper(libusb_detach_kernel_driver(dev_handle, prog_if))) {
+    if (LibUsbHelperError(libusb_detach_kernel_driver(dev_handle, prog_if))) {
       return E_FAILED_USB_OPERATIONS;
     }
   }
 
   // Step 3. set USB configurations
-  LibUsbHelper(libusb_set_configuration(dev_handle, 1));
+  LibUsbHelperWarning(libusb_set_configuration(dev_handle, 1));
 
   // Step 4. claim USB interface
-  if (LibUsbHelper(libusb_claim_interface(dev_handle, prog_if)))
+  if (LibUsbHelperError(libusb_claim_interface(dev_handle, prog_if)))
     return E_FAILED_USB_OPERATIONS;
 
   // secret source: write 9 to 0xc212 and 0xc213.(using req type 2)
@@ -475,15 +501,16 @@ static StatusCode ReadDeviceFwVersion(
 
 static void PrintFwVersion(uint8_t* version) {
   uint32_t version_number = 0;
-  std::cout << "Fw version: ";
 
   for (int i = 0; i < 4; ++i) {
     uint32_t current_digit = version[i];
     version_number = version_number + (current_digit << (8 * i));
   }
 
-  std::cout << "0x" << std::hex << version_number;
-  std::cout << std::dec << std::endl;
+  LOG(INFO)
+      << "Firmware version: "
+      << "0x" << std::hex << version_number
+      << std::dec;
 }
 
 // Actually update the firmware.
@@ -604,7 +631,7 @@ static StatusCode FwUpdateMainOrPollVersion(
   }
 
   // Step 1. init USB lib
-  if (LibUsbHelper(libusb_init(&ctx)))
+  if (LibUsbHelperError(libusb_init(&ctx)))
     return E_FAILED_USB_OPERATIONS;
 
   libusb_set_debug(ctx, LIBUSB_LOG_LEVEL_INFO);
@@ -638,7 +665,7 @@ static StatusCode FwUpdateMainOrPollVersion(
       const int prog_if = (pid == kMimoProductIdA) ? 1 : 0;
       libusb_device_handle *device_handle;
 
-      if (LibUsbHelper(libusb_open(current_device, &device_handle)))
+      if (LibUsbHelperError(libusb_open(current_device, &device_handle)))
         return E_FAILED_USB_OPERATIONS;
 
       switch (operation_mode) {
@@ -653,8 +680,9 @@ static StatusCode FwUpdateMainOrPollVersion(
           if (status == E_OK) {
             PrintFwVersion(fw_version);
           } else {
-            std::cerr << "[Fatal] Failed to poll firmware: " << status;
-            std::cerr << ", device: " << i << std::endl;
+            LOG(ERROR)
+                << "Failed to poll firmware: " << status
+                << ", device: " << i;
           }
           break;
         }
@@ -669,8 +697,9 @@ static StatusCode FwUpdateMainOrPollVersion(
               version);
 
           if (status != E_OK && status != E_OK_NO_UPDATE) {
-            std::cerr << "[Fatal] Failed to update firmware: " << status;
-            std::cerr << ", device: " << i << std::endl;
+            LOG(ERROR)
+                << "Failed to update firmware: " << status
+                << ", device: " << i;
           }
 
           // The reason that it is rebooted even if the update fails is that
@@ -684,14 +713,15 @@ static StatusCode FwUpdateMainOrPollVersion(
           break;
         }
         default: {
-          std::cerr << "[Fatal] Unknown operation mode(";
-          std::cerr << operation_mode << ")" << std::endl;
+          LOG(ERROR)
+              << "Unknown operation mode("
+              << operation_mode << ")";
           break;
         }
       }
 
-      LibUsbHelper(libusb_release_interface(device_handle, prog_if));
-      LibUsbHelper(libusb_attach_kernel_driver(device_handle, prog_if));
+      LibUsbHelperWarning(libusb_release_interface(device_handle, prog_if));
+      LibUsbHelperWarning(libusb_attach_kernel_driver(device_handle, prog_if));
       libusb_close(device_handle);
     }
   }
@@ -704,12 +734,15 @@ static StatusCode FwUpdateMainOrPollVersion(
 }  // namespace
 
 int main(int argc, char **argv) {
+  // Initialize the logging system.
+  brillo::InitLog(brillo::InitFlags::kLogToSyslog);
+
   OperationMode operation_mode;
   std::string fw_file_name;
 
   // check the input
   if (argc == kNrParamPollMode) {
-    std::cout << "Querying device firmware version info:" << std::endl;
+    LOG(INFO) << "Querying device firmware version info:";
     operation_mode = E_POLL_VERSION_MODE;
   } else if (argc == kNrParamUpdateMode) {
     operation_mode = E_FW_UPDATE_MODE;
@@ -725,8 +758,9 @@ int main(int argc, char **argv) {
   status = FwUpdateMainOrPollVersion(fw_file_name, operation_mode);
 
   if (status != E_OK) {
-    std::cerr << "[Fatal] Failed to update firmware: ";
-    std::cerr << status << std::endl;
+    LOG(ERROR)
+        << "Failed to update firmware: "
+        << "status: " << status;
     return status;
   }
 
