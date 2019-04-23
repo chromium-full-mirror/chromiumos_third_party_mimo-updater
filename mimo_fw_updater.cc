@@ -634,7 +634,11 @@ static StatusCode FwUpdateMainOrPollVersion(
   if (LibUsbHelperError(libusb_init(&ctx)))
     return E_FAILED_USB_OPERATIONS;
 
+#if defined(LIBUSB_API_VERSION) && (LIBUSB_API_VERSION >= 0x01000106)
+  libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_INFO);
+#else
   libusb_set_debug(ctx, LIBUSB_LOG_LEVEL_INFO);
+#endif
 
   // Step 2. get all USB devices
   const ssize_t dev_cnt = libusb_get_device_list(ctx, &devs);
