@@ -6,7 +6,7 @@ include common.mk
 
 TARGET_NAME := mimo-updater
 
-PC_DEPS = libbrillo libchrome-$(BASE_VER) libusb-1.0
+PC_DEPS = libbrillo libchrome libusb-1.0
 PC_LIBS := $(shell $(PKG_CONFIG) --libs $(PC_DEPS))
 PC_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PC_DEPS))
 
