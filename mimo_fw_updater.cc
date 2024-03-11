@@ -98,9 +98,9 @@ const int kVendorI2cRead = 0x19;
 const int kVendorI2cWrite = 0x18;
 
 const int kReqTypeVendorIn =
-    (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_IN);
+    (int(LIBUSB_REQUEST_TYPE_VENDOR) | int(LIBUSB_ENDPOINT_IN));
 const int kReqTypeVendorOut =
-    (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT);
+    (int(LIBUSB_REQUEST_TYPE_VENDOR) | int(LIBUSB_ENDPOINT_OUT));
 
 enum TestPointLocation {
   E_TP_INVALID,
